@@ -94,13 +94,15 @@ class App(_BaseTk):
         ctk.set_appearance_mode("light")
 
         self.title("Lepere Tools")
-        self.geometry("860x620")
-        self.minsize(780, 560)
+        self.geometry("860x660")
+        self.minsize(780, 600)
         self.configure(fg_color=C["tarjeta_borde"])
 
         self.archivo = None
         self.cola = queue.Queue()
         self.worker = None
+        self.worker_meta = None
+        self._aviso_pronto_job = None
 
         self._build_ui()
         self.after(80, self._procesar_cola)
@@ -198,12 +200,12 @@ class App(_BaseTk):
         self._item_activo(herramientas, "file-csv-active.png", "Excel → CSV").grid(
             row=0, column=0, sticky="ew", pady=(0, 4)
         )
-        self._item_inactivo(herramientas, "file-pdf-inactive.png", "Unir PDFs").grid(
-            row=1, column=0, sticky="ew", pady=(0, 4)
-        )
-        self._item_inactivo(herramientas, "broom-inactive.png", "Limpiar datos").grid(
-            row=2, column=0, sticky="ew"
-        )
+        self._item_inactivo(
+            herramientas, "file-pdf-inactive.png", "Unir PDFs"
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        self._item_inactivo(
+            herramientas, "broom-inactive.png", "Limpiar datos"
+        ).grid(row=2, column=0, sticky="ew")
 
         # Pie
         pie = ctk.CTkFrame(side, fg_color="transparent")
@@ -234,7 +236,7 @@ class App(_BaseTk):
         return fila
 
     def _item_inactivo(self, parent, icono, texto):
-        fila = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=10)
+        fila = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=10, cursor="arrow")
         fila.grid_columnconfigure(1, weight=1)
 
         def on_enter(_):
@@ -243,22 +245,47 @@ class App(_BaseTk):
         def on_leave(_):
             fila.configure(fg_color="transparent")
 
-        fila.bind("<Enter>", on_enter)
-        fila.bind("<Leave>", on_leave)
+        def on_click(_):
+            self._avisar_pronto(texto)
 
-        ctk.CTkLabel(fila, image=_icon(icono, 19), text="").grid(
-            row=0, column=0, padx=(12, 11), pady=11
-        )
-        ctk.CTkLabel(
-            fila, text=texto, text_color=C["side_muted"],
+        widgets = [fila]
+        widgets[0].bind("<Enter>", on_enter)
+        widgets[0].bind("<Leave>", on_leave)
+        widgets[0].bind("<Button-1>", on_click)
+
+        icono_lbl = ctk.CTkLabel(fila, image=_icon(icono, 19), text="", cursor="arrow")
+        icono_lbl.grid(row=0, column=0, padx=(12, 11), pady=11)
+        texto_lbl = ctk.CTkLabel(
+            fila, text=texto, text_color=C["side_muted"], cursor="arrow",
             font=ctk.CTkFont(FUENTE_UI, size=13, weight="normal"), anchor="w",
-        ).grid(row=0, column=1, sticky="w", pady=11)
+        )
+        texto_lbl.grid(row=0, column=1, sticky="w", pady=11)
         ctk.CTkLabel(
             fila, text="PRONTO", text_color=C["pronto_texto"],
             font=ctk.CTkFont(FUENTE_UI, size=9, weight="bold"),
             corner_radius=5, fg_color="transparent",
         ).grid(row=0, column=2, padx=(0, 12))
+
+        # El icono y el texto tambien deben reaccionar al hover/click, no solo el fondo
+        for w in (icono_lbl, texto_lbl):
+            w.bind("<Enter>", on_enter)
+            w.bind("<Leave>", on_leave)
+            w.bind("<Button-1>", on_click)
+
         return fila
+
+    def _avisar_pronto(self, nombre_herramienta):
+        if self._aviso_pronto_job is not None:
+            self.after_cancel(self._aviso_pronto_job)
+        self._set_estado(C["pronto_texto"], f"'{nombre_herramienta}' estará disponible próximamente")
+        self._aviso_pronto_job = self.after(2500, self._restaurar_estado_archivo)
+
+    def _restaurar_estado_archivo(self):
+        self._aviso_pronto_job = None
+        if self.archivo:
+            self._set_estado(C["exito"], "Listo para convertir")
+        else:
+            self._set_estado(C["texto_muted"], "Selecciona un archivo")
 
     def _build_contenido(self, parent):
         cont = ctk.CTkFrame(parent, fg_color=C["lienzo"], corner_radius=0)
@@ -375,16 +402,23 @@ class App(_BaseTk):
         )
         self.btn_convertir.pack(fill="x", pady=(0, 0))
 
+        # Barra de progreso (oculta hasta iniciar la conversion)
+        self.progress = ctk.CTkProgressBar(
+            wrap, height=6, corner_radius=3,
+            fg_color=C["tarjeta_borde"], progress_color=C["acento"],
+        )
+        self.progress.set(0)
+
         # Estado
-        estado_fila = ctk.CTkFrame(wrap, fg_color="transparent")
-        estado_fila.pack(anchor="w", pady=(20, 0))
+        self.estado_fila = ctk.CTkFrame(wrap, fg_color="transparent")
+        self.estado_fila.pack(anchor="w", pady=(20, 0))
         self.estado_punto = ctk.CTkLabel(
-            estado_fila, text="●", text_color=C["exito"],
+            self.estado_fila, text="●", text_color=C["exito"],
             font=ctk.CTkFont(FUENTE_MONO, size=12),
         )
         self.estado_punto.pack(side="left", padx=(0, 6))
         self.lbl_estado = ctk.CTkLabel(
-            estado_fila, text="Selecciona un archivo", text_color=C["texto_muted"],
+            self.estado_fila, text="Selecciona un archivo", text_color=C["texto_muted"],
             font=ctk.CTkFont(FUENTE_MONO, size=11),
         )
         self.lbl_estado.pack(side="left")
@@ -422,28 +456,42 @@ class App(_BaseTk):
             return
 
         self.archivo = ruta
+        self.progress.pack_forget()
+        self.progress.set(0)
+
+        self.lbl_nombre_archivo.configure(text=os.path.basename(ruta))
+        self.lbl_meta_archivo.configure(text="Leyendo información del archivo…")
+        self.archivo_card.pack(fill="x", pady=(0, 22), before=self.btn_convertir)
+
+        self.btn_convertir.configure(state="disabled", fg_color=C["btn_disabled"])
+        self._set_estado(C["acento"], "Analizando archivo…")
+
+        # La lectura de metadatos (nº de hojas) abre el libro completo; se hace
+        # en un hilo aparte para no bloquear la ventana con archivos grandes.
+        self.worker_meta = threading.Thread(
+            target=self._tarea_metadatos, args=(ruta,), daemon=True
+        )
+        self.worker_meta.start()
+
+    def _tarea_metadatos(self, ruta):
         try:
             n_hojas, tamano = conversion.contar_hojas_y_tamano(ruta)
             meta = f"{n_hojas} hoja{'s' if n_hojas != 1 else ''} detectadas · {tamano / 1024:.0f} KB"
-        except Exception:
-            meta = ""
-
-        self.lbl_nombre_archivo.configure(text=os.path.basename(ruta))
-        self.lbl_meta_archivo.configure(text=meta)
-        self.archivo_card.pack(fill="x", pady=(0, 22), before=self.btn_convertir)
-
-        self.btn_convertir.configure(state="normal", fg_color=C["acento"])
-        self._set_estado(C["exito"], "Listo para convertir")
+            self.cola.put(("meta_ok", (ruta, meta)))
+        except Exception as e:
+            self.cola.put(("meta_error", (ruta, e)))
 
     def _quitar_archivo(self):
         self.archivo = None
         self.archivo_card.pack_forget()
+        self.progress.pack_forget()
         self.btn_convertir.configure(state="disabled", fg_color=C["btn_disabled"])
         self._set_estado(C["texto_muted"], "Selecciona un archivo")
 
     def _set_estado(self, color, texto):
+        texto_color = C["texto_muted"] if color in (C["exito"], C["acento"]) else color
         self.estado_punto.configure(text_color=color)
-        self.lbl_estado.configure(text=texto, text_color=color if color == C["error"] else C["texto_muted"])
+        self.lbl_estado.configure(text=texto, text_color=texto_color)
 
     # ------------------------------------------------------------------
     # Conversion
@@ -454,6 +502,8 @@ class App(_BaseTk):
             return
 
         self.btn_convertir.configure(state="disabled", text="Convirtiendo…")
+        self.progress.set(0)
+        self.progress.pack(fill="x", pady=(16, 0), before=self.estado_fila)
         self._set_estado(C["acento"], "Procesando hojas…")
 
         self.worker = threading.Thread(
@@ -476,21 +526,55 @@ class App(_BaseTk):
             while True:
                 tipo, payload = self.cola.get_nowait()
                 if tipo == "progreso":
-                    nombre = payload.get("nombre_hoja", "")
-                    self._set_estado(C["acento"], f"Procesando hoja: '{nombre}'…")
+                    self._actualizar_progreso(payload)
                 elif tipo == "ok":
                     self._finalizar_ok(payload)
                 elif tipo == "error":
                     self._finalizar_error(payload)
+                elif tipo == "meta_ok":
+                    self._aplicar_metadatos(*payload)
+                elif tipo == "meta_error":
+                    self._aplicar_metadatos_error(*payload)
         except queue.Empty:
             pass
         self.after(80, self._procesar_cola)
 
+    def _aplicar_metadatos(self, ruta, meta):
+        if ruta != self.archivo:
+            return  # el usuario cambio de archivo mientras se leia este
+        self.lbl_meta_archivo.configure(text=meta)
+        self.btn_convertir.configure(state="normal", fg_color=C["acento"])
+        self._set_estado(C["exito"], "Listo para convertir")
+
+    def _aplicar_metadatos_error(self, ruta, err):
+        if ruta != self.archivo:
+            return
+        self.lbl_meta_archivo.configure(text="No se pudo leer el archivo")
+        self._set_estado(C["error"], f"Error: {err}")
+
+    def _actualizar_progreso(self, info):
+        fase = info.get("fase")
+        hoja = info.get("hoja_actual", 0)
+        total = info.get("total_hojas", 1) or 1
+        nombre = info.get("nombre_hoja", "")
+        filas = info.get("filas", 0)
+
+        if fase == "hoja":
+            self.progress.set((hoja - 1) / total)
+            self._set_estado(C["acento"], f"Procesando hoja {hoja}/{total}: '{nombre}'…")
+        elif fase == "filas":
+            self._set_estado(C["acento"], f"Hoja {hoja}/{total} '{nombre}' · {filas:,} filas…")
+        elif fase == "hoja_fin":
+            self.progress.set(hoja / total)
+            self._set_estado(C["acento"], f"Hoja {hoja}/{total} '{nombre}' lista ({filas:,} filas)")
+
     def _finalizar_ok(self, salida):
+        self.progress.set(1)
         self.btn_convertir.configure(state="normal", text="→  Convertir a CSV")
         self._set_estado(C["exito"], f"✓ Convertido · guardado en {salida}")
 
     def _finalizar_error(self, err):
+        self.progress.pack_forget()
         self.btn_convertir.configure(state="normal", text="→  Convertir a CSV")
         self._set_estado(C["error"], f"Error: {err}")
 

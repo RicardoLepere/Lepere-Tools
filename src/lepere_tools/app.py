@@ -1,0 +1,499 @@
+"""
+Lepere Tools - Workbench de escritorio.
+Replica del diseno "design_handoff_lepere_tools" (CustomTkinter).
+
+Herramienta activa: Excel -> CSV.
+"""
+
+import os
+import queue
+import threading
+
+import customtkinter as ctk
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+
+    _DND_OK = True
+except ImportError:
+    _DND_OK = False
+
+from PIL import Image
+
+from . import conversion
+from .fonts import cargar_fuentes_embebidas
+
+ASSETS = os.path.join(os.path.dirname(__file__), "assets")
+ICONS = os.path.join(ASSETS, "icons")
+LOGO_PATH = os.path.join(ASSETS, "logo", "lepere-logo.png")
+
+# ---------------------------------------------------------------------------
+# Tokens de diseno (ver README del handoff)
+# ---------------------------------------------------------------------------
+
+C = {
+    "azul_oscuro": "#16283F",
+    "azul_borde": "#1F3450",
+    "azul_borde_2": "#22384F",
+    "activo_bg": "#213E62",
+    "acento": "#2E86E0",
+    "acento_hover": "#1D6FC4",
+    "acento_claro": "#5AA2F0",
+    "acento_tint": "#E3EEFB",
+    "lienzo": "#EEEAE3",
+    "tarjeta": "#FFFFFF",
+    "tarjeta_borde": "#DDD8CD",
+    "drop_borde": "#C4BDAE",
+    "texto": "#1B1A16",
+    "texto_muted": "#6F6A60",
+    "texto_faint": "#9A948A",
+    "side_titulo": "#F0F4FA",
+    "side_muted": "#9FB1C8",
+    "side_muted_2": "#8197B0",
+    "side_label": "#62799A",
+    "side_icono": "#7287A3",
+    "pronto_borde": "#2D4A68",
+    "pronto_texto": "#7E93AD",
+    "exito": "#6BA03A",
+    "exito_tint": "#E7F1DC",
+    "error": "#C0392B",
+    "btn_disabled": "#A9C7EC",
+    "hover_item_inactivo": "#1F3A5C",
+}
+
+FUENTE_UI = "Manrope"
+FUENTE_MONO = "IBM Plex Mono"
+
+
+def _icon(nombre, size=None):
+    ruta = os.path.join(ICONS, nombre)
+    img = Image.open(ruta)
+    if size:
+        return ctk.CTkImage(light_image=img, dark_image=img, size=(size, size))
+    w, h = img.size
+    return ctk.CTkImage(light_image=img, dark_image=img, size=(w // 2, h // 2))
+
+
+class _BaseTk(ctk.CTk):
+    pass
+
+
+if _DND_OK:
+    class _DndCTk(TkinterDnD.DnDWrapper, ctk.CTk):
+        def __init__(self, *args, **kwargs):
+            ctk.CTk.__init__(self, *args, **kwargs)
+            self.TkdndVersion = TkinterDnD._require(self)
+
+    _BaseTk = _DndCTk
+
+
+class App(_BaseTk):
+    def __init__(self):
+        cargar_fuentes_embebidas()
+        super().__init__()
+        ctk.set_appearance_mode("light")
+
+        self.title("Lepere Tools")
+        self.geometry("860x620")
+        self.minsize(780, 560)
+        self.configure(fg_color=C["tarjeta_borde"])
+
+        self.archivo = None
+        self.cola = queue.Queue()
+        self.worker = None
+
+        self._build_ui()
+        self.after(80, self._procesar_cola)
+
+    # ------------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------------
+
+    def _build_ui(self):
+        marco = ctk.CTkFrame(
+            self, fg_color=C["tarjeta"], corner_radius=4,
+            border_width=1, border_color=C["tarjeta_borde"],
+        )
+        marco.pack(fill="both", expand=True, padx=1, pady=1)
+        marco.grid_rowconfigure(1, weight=1)
+        marco.grid_columnconfigure(0, weight=1)
+
+        self._build_titlebar(marco)
+
+        cuerpo = ctk.CTkFrame(marco, fg_color="transparent", corner_radius=0)
+        cuerpo.grid(row=1, column=0, sticky="nsew")
+        cuerpo.grid_columnconfigure(1, weight=1)
+        cuerpo.grid_rowconfigure(0, weight=1)
+
+        self._build_sidebar(cuerpo)
+        self._build_contenido(cuerpo)
+
+    def _build_titlebar(self, parent):
+        bar = ctk.CTkFrame(
+            parent, fg_color=C["azul_oscuro"], corner_radius=0, height=40,
+            border_width=0,
+        )
+        bar.grid(row=0, column=0, sticky="ew")
+        bar.grid_propagate(False)
+
+        izq = ctk.CTkFrame(bar, fg_color="transparent")
+        izq.pack(side="left", padx=14)
+        ctk.CTkLabel(izq, image=_icon("file-csv-active.png", 18), text="").pack(
+            side="left", padx=(0, 8)
+        )
+        ctk.CTkLabel(
+            izq, text="Lepere Tools", text_color=C["side_muted"],
+            font=ctk.CTkFont(FUENTE_UI, size=12, weight="bold"),
+        ).pack(side="left")
+
+        der = ctk.CTkFrame(bar, fg_color="transparent")
+        der.pack(side="right", padx=14)
+        for icono in ("win-minus.png", "win-square.png", "win-close.png"):
+            ctk.CTkLabel(der, image=_icon(icono, 16), text="").pack(
+                side="left", padx=(17, 0)
+            )
+
+    def _build_sidebar(self, parent):
+        side = ctk.CTkFrame(
+            parent, fg_color=C["azul_oscuro"], corner_radius=0, width=234,
+            border_width=0,
+        )
+        side.grid(row=0, column=0, sticky="nsw")
+        side.grid_propagate(False)
+        side.grid_columnconfigure(0, weight=1)
+        side.grid_rowconfigure(3, weight=1)
+
+        # Marca
+        marca = ctk.CTkFrame(side, fg_color="transparent")
+        marca.grid(row=0, column=0, sticky="ew", padx=14, pady=(22, 16))
+        sep = ctk.CTkFrame(side, fg_color=C["azul_borde_2"], height=1)
+        sep.place(in_=marca, relx=0, rely=1.0, relwidth=1.0, y=20)
+
+        logo_img = Image.open(LOGO_PATH)
+        logo_ctk = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(40, 40))
+        ctk.CTkLabel(marca, image=logo_ctk, text="").grid(row=0, column=0, rowspan=2, padx=(0, 10))
+        ctk.CTkLabel(
+            marca, text="Lepere", text_color=C["side_titulo"],
+            font=ctk.CTkFont(FUENTE_UI, size=15, weight="bold"),
+        ).grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(
+            marca, text="Tools", text_color=C["side_muted"],
+            font=ctk.CTkFont(FUENTE_UI, size=11, weight="bold"),
+        ).grid(row=1, column=1, sticky="w")
+
+        # Etiqueta HERRAMIENTAS
+        ctk.CTkLabel(
+            side, text="HERRAMIENTAS", text_color=C["side_label"],
+            font=ctk.CTkFont(FUENTE_UI, size=10, weight="bold"),
+        ).grid(row=1, column=0, sticky="w", padx=22, pady=(20, 10))
+
+        herramientas = ctk.CTkFrame(side, fg_color="transparent")
+        herramientas.grid(row=2, column=0, sticky="ew", padx=14)
+        herramientas.grid_columnconfigure(0, weight=1)
+
+        self._item_activo(herramientas, "file-csv-active.png", "Excel → CSV").grid(
+            row=0, column=0, sticky="ew", pady=(0, 4)
+        )
+        self._item_inactivo(herramientas, "file-pdf-inactive.png", "Unir PDFs").grid(
+            row=1, column=0, sticky="ew", pady=(0, 4)
+        )
+        self._item_inactivo(herramientas, "broom-inactive.png", "Limpiar datos").grid(
+            row=2, column=0, sticky="ew"
+        )
+
+        # Pie
+        pie = ctk.CTkFrame(side, fg_color="transparent")
+        pie.grid(row=4, column=0, sticky="ew", padx=22, pady=18)
+        avatar = ctk.CTkFrame(
+            pie, fg_color=C["activo_bg"], corner_radius=14, width=27, height=27,
+        )
+        avatar.grid(row=0, column=0, padx=(0, 9))
+        avatar.grid_propagate(False)
+        ctk.CTkLabel(avatar, image=_icon("user-footer.png", 13), text="").place(
+            relx=0.5, rely=0.5, anchor="center"
+        )
+        ctk.CTkLabel(
+            pie, text="v1.2.0 · estable", text_color=C["pronto_texto"],
+            font=ctk.CTkFont(FUENTE_UI, size=11, weight="bold"),
+        ).grid(row=0, column=1, sticky="w")
+
+    def _item_activo(self, parent, icono, texto):
+        fila = ctk.CTkFrame(parent, fg_color=C["activo_bg"], corner_radius=10)
+        fila.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(fila, image=_icon(icono, 19), text="").grid(
+            row=0, column=0, padx=(12, 11), pady=11
+        )
+        ctk.CTkLabel(
+            fila, text=texto, text_color=C["side_titulo"],
+            font=ctk.CTkFont(FUENTE_UI, size=13, weight="bold"), anchor="w",
+        ).grid(row=0, column=1, sticky="w", pady=11)
+        return fila
+
+    def _item_inactivo(self, parent, icono, texto):
+        fila = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=10)
+        fila.grid_columnconfigure(1, weight=1)
+
+        def on_enter(_):
+            fila.configure(fg_color=C["hover_item_inactivo"])
+
+        def on_leave(_):
+            fila.configure(fg_color="transparent")
+
+        fila.bind("<Enter>", on_enter)
+        fila.bind("<Leave>", on_leave)
+
+        ctk.CTkLabel(fila, image=_icon(icono, 19), text="").grid(
+            row=0, column=0, padx=(12, 11), pady=11
+        )
+        ctk.CTkLabel(
+            fila, text=texto, text_color=C["side_muted"],
+            font=ctk.CTkFont(FUENTE_UI, size=13, weight="normal"), anchor="w",
+        ).grid(row=0, column=1, sticky="w", pady=11)
+        ctk.CTkLabel(
+            fila, text="PRONTO", text_color=C["pronto_texto"],
+            font=ctk.CTkFont(FUENTE_UI, size=9, weight="bold"),
+            corner_radius=5, fg_color="transparent",
+        ).grid(row=0, column=2, padx=(0, 12))
+        return fila
+
+    def _build_contenido(self, parent):
+        cont = ctk.CTkFrame(parent, fg_color=C["lienzo"], corner_radius=0)
+        cont.grid(row=0, column=1, sticky="nsew")
+        cont.grid_columnconfigure(0, weight=1)
+
+        wrap = ctk.CTkFrame(cont, fg_color="transparent")
+        wrap.pack(fill="x", padx=40, pady=(36, 0))
+
+        ctk.CTkLabel(
+            wrap, text="CONVERSOR", text_color=C["acento"],
+            font=ctk.CTkFont(FUENTE_UI, size=11, weight="bold"),
+        ).pack(anchor="w", pady=(0, 9))
+
+        titulo = ctk.CTkFrame(wrap, fg_color="transparent")
+        titulo.pack(anchor="w")
+        ctk.CTkLabel(
+            titulo, text="Excel ", text_color=C["texto"],
+            font=ctk.CTkFont(FUENTE_UI, size=32, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            titulo, text="→", text_color=C["acento"],
+            font=ctk.CTkFont(FUENTE_UI, size=32, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            titulo, text=" CSV", text_color=C["texto"],
+            font=ctk.CTkFont(FUENTE_UI, size=32, weight="bold"),
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            wrap,
+            text="Une todas las hojas de tu libro en un solo archivo CSV\ncodificado en UTF-8 con BOM.",
+            text_color=C["texto_muted"], justify="left",
+            font=ctk.CTkFont(FUENTE_UI, size=14),
+        ).pack(anchor="w", pady=(9, 28))
+
+        # Drop zone
+        self.drop_zone = ctk.CTkFrame(
+            wrap, fg_color=C["tarjeta"], corner_radius=14,
+            border_width=2, border_color=C["drop_borde"],
+        )
+        self.drop_zone.pack(fill="x", pady=(0, 16))
+
+        interior = ctk.CTkFrame(self.drop_zone, fg_color="transparent")
+        interior.pack(pady=32)
+
+        caja_icono = ctk.CTkFrame(
+            interior, fg_color=C["acento_tint"], corner_radius=13, width=54, height=54,
+        )
+        caja_icono.pack(pady=(0, 13))
+        caja_icono.pack_propagate(False)
+        ctk.CTkLabel(caja_icono, image=_icon("cloud-arrow-up.png", 29), text="").place(
+            relx=0.5, rely=0.5, anchor="center"
+        )
+
+        ctk.CTkLabel(
+            interior, text="Arrastra tu archivo Excel aquí", text_color=C["texto"],
+            font=ctk.CTkFont(FUENTE_UI, size=15, weight="bold"),
+        ).pack()
+        ctk.CTkLabel(
+            interior, text="o haz clic para buscar — .xlsx, .xls",
+            text_color=C["texto_muted"], font=ctk.CTkFont(FUENTE_UI, size=12),
+        ).pack()
+
+        for widget in (self.drop_zone, interior, caja_icono):
+            widget.bind("<Button-1>", lambda e: self._seleccionar_archivo())
+        if _DND_OK:
+            self.drop_zone.drop_target_register(DND_FILES)
+            self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+            self.drop_zone.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+            self.drop_zone.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+
+        # Tarjeta de archivo seleccionado (oculta hasta elegir archivo)
+        self.archivo_card = ctk.CTkFrame(
+            wrap, fg_color=C["tarjeta"], corner_radius=11,
+            border_width=1, border_color=C["tarjeta_borde"],
+        )
+        self.archivo_card.grid_columnconfigure(1, weight=1)
+
+        self.check_box = ctk.CTkFrame(
+            self.archivo_card, fg_color=C["exito_tint"], corner_radius=8, width=31, height=31,
+        )
+        self.check_box.grid(row=0, column=0, padx=(15, 12), pady=13)
+        self.check_box.grid_propagate(False)
+        ctk.CTkLabel(self.check_box, image=_icon("check.png", 16), text="").place(
+            relx=0.5, rely=0.5, anchor="center"
+        )
+
+        info = ctk.CTkFrame(self.archivo_card, fg_color="transparent")
+        info.grid(row=0, column=1, sticky="ew", pady=13)
+        self.lbl_nombre_archivo = ctk.CTkLabel(
+            info, text="", text_color=C["texto"], anchor="w",
+            font=ctk.CTkFont(FUENTE_MONO, size=12),
+        )
+        self.lbl_nombre_archivo.pack(anchor="w", fill="x")
+        self.lbl_meta_archivo = ctk.CTkLabel(
+            info, text="", text_color=C["texto_faint"], anchor="w",
+            font=ctk.CTkFont(FUENTE_UI, size=11),
+        )
+        self.lbl_meta_archivo.pack(anchor="w", fill="x")
+
+        quitar = ctk.CTkLabel(
+            self.archivo_card, image=_icon("remove-file.png", 16), text="", cursor="hand2",
+        )
+        quitar.grid(row=0, column=2, padx=15)
+        quitar.bind("<Button-1>", lambda e: self._quitar_archivo())
+
+        # Boton convertir
+        self.btn_convertir = ctk.CTkButton(
+            wrap, text="→  Convertir a CSV", height=50, corner_radius=12,
+            fg_color=C["btn_disabled"], hover_color=C["acento_hover"],
+            text_color="white", font=ctk.CTkFont(FUENTE_UI, size=15, weight="bold"),
+            command=self._iniciar_conversion, state="disabled",
+        )
+        self.btn_convertir.pack(fill="x", pady=(0, 0))
+
+        # Estado
+        estado_fila = ctk.CTkFrame(wrap, fg_color="transparent")
+        estado_fila.pack(anchor="w", pady=(20, 0))
+        self.estado_punto = ctk.CTkLabel(
+            estado_fila, text="●", text_color=C["exito"],
+            font=ctk.CTkFont(FUENTE_MONO, size=12),
+        )
+        self.estado_punto.pack(side="left", padx=(0, 6))
+        self.lbl_estado = ctk.CTkLabel(
+            estado_fila, text="Selecciona un archivo", text_color=C["texto_muted"],
+            font=ctk.CTkFont(FUENTE_MONO, size=11),
+        )
+        self.lbl_estado.pack(side="left")
+
+    # ------------------------------------------------------------------
+    # Drag & drop / seleccion
+    # ------------------------------------------------------------------
+
+    def _on_drag_enter(self, event):
+        self.drop_zone.configure(border_color=C["acento"], fg_color=C["acento_tint"])
+
+    def _on_drag_leave(self, event):
+        self.drop_zone.configure(border_color=C["drop_borde"], fg_color=C["tarjeta"])
+
+    def _on_drop(self, event):
+        self.drop_zone.configure(border_color=C["drop_borde"], fg_color=C["tarjeta"])
+        rutas = self.tk.splitlist(event.data)
+        if rutas:
+            self._cargar_archivo(rutas[0])
+
+    def _seleccionar_archivo(self):
+        from tkinter import filedialog
+
+        ruta = filedialog.askopenfilename(
+            title="Selecciona un archivo Excel",
+            filetypes=[("Archivos Excel", "*.xlsx *.xls"), ("Todos", "*.*")],
+        )
+        if ruta:
+            self._cargar_archivo(ruta)
+
+    def _cargar_archivo(self, ruta):
+        ext = os.path.splitext(ruta)[1].lower()
+        if ext not in (".xlsx", ".xls"):
+            self._set_estado(C["error"], f"Formato no soportado: {ext}")
+            return
+
+        self.archivo = ruta
+        try:
+            n_hojas, tamano = conversion.contar_hojas_y_tamano(ruta)
+            meta = f"{n_hojas} hoja{'s' if n_hojas != 1 else ''} detectadas · {tamano / 1024:.0f} KB"
+        except Exception:
+            meta = ""
+
+        self.lbl_nombre_archivo.configure(text=os.path.basename(ruta))
+        self.lbl_meta_archivo.configure(text=meta)
+        self.archivo_card.pack(fill="x", pady=(0, 22), before=self.btn_convertir)
+
+        self.btn_convertir.configure(state="normal", fg_color=C["acento"])
+        self._set_estado(C["exito"], "Listo para convertir")
+
+    def _quitar_archivo(self):
+        self.archivo = None
+        self.archivo_card.pack_forget()
+        self.btn_convertir.configure(state="disabled", fg_color=C["btn_disabled"])
+        self._set_estado(C["texto_muted"], "Selecciona un archivo")
+
+    def _set_estado(self, color, texto):
+        self.estado_punto.configure(text_color=color)
+        self.lbl_estado.configure(text=texto, text_color=color if color == C["error"] else C["texto_muted"])
+
+    # ------------------------------------------------------------------
+    # Conversion
+    # ------------------------------------------------------------------
+
+    def _iniciar_conversion(self):
+        if not self.archivo or (self.worker and self.worker.is_alive()):
+            return
+
+        self.btn_convertir.configure(state="disabled", text="Convirtiendo…")
+        self._set_estado(C["acento"], "Procesando hojas…")
+
+        self.worker = threading.Thread(
+            target=self._tarea_conversion, args=(self.archivo,), daemon=True
+        )
+        self.worker.start()
+
+    def _tarea_conversion(self, ruta):
+        def cb(**kwargs):
+            self.cola.put(("progreso", kwargs))
+
+        try:
+            salida = conversion.convertir(ruta, cb)
+            self.cola.put(("ok", salida))
+        except Exception as e:
+            self.cola.put(("error", e))
+
+    def _procesar_cola(self):
+        try:
+            while True:
+                tipo, payload = self.cola.get_nowait()
+                if tipo == "progreso":
+                    nombre = payload.get("nombre_hoja", "")
+                    self._set_estado(C["acento"], f"Procesando hoja: '{nombre}'…")
+                elif tipo == "ok":
+                    self._finalizar_ok(payload)
+                elif tipo == "error":
+                    self._finalizar_error(payload)
+        except queue.Empty:
+            pass
+        self.after(80, self._procesar_cola)
+
+    def _finalizar_ok(self, salida):
+        self.btn_convertir.configure(state="normal", text="→  Convertir a CSV")
+        self._set_estado(C["exito"], f"✓ Convertido · guardado en {salida}")
+
+    def _finalizar_error(self, err):
+        self.btn_convertir.configure(state="normal", text="→  Convertir a CSV")
+        self._set_estado(C["error"], f"Error: {err}")
+
+
+def main():
+    App().mainloop()
+
+
+if __name__ == "__main__":
+    main()

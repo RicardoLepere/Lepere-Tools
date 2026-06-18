@@ -6,8 +6,10 @@ Herramienta activa: Excel -> CSV.
 """
 
 import os
+import platform
 import queue
 import threading
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
@@ -26,6 +28,7 @@ from .fonts import cargar_fuentes_embebidas
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 ICONS = os.path.join(ASSETS, "icons")
 LOGO_PATH = os.path.join(ASSETS, "logo", "lepere-logo.png")
+LOGO_ICO_PATH = os.path.join(ASSETS, "logo", "lepere-logo.ico")
 
 # ---------------------------------------------------------------------------
 # Tokens de diseno (ver README del handoff)
@@ -97,6 +100,7 @@ class App(_BaseTk):
         self.geometry("860x660")
         self.minsize(780, 600)
         self.configure(fg_color=C["tarjeta_borde"])
+        self._set_icono_app()
 
         self.archivo = None
         self.cola = queue.Queue()
@@ -106,6 +110,19 @@ class App(_BaseTk):
 
         self._build_ui()
         self.after(80, self._procesar_cola)
+
+    def _set_icono_app(self):
+        """Icono de la ventana y de la barra de tareas (logo Lepere)."""
+        try:
+            if platform.system() == "Windows" and os.path.isfile(LOGO_ICO_PATH):
+                self.iconbitmap(LOGO_ICO_PATH)
+            else:
+                from PIL import ImageTk
+
+                self._logo_icon_photo = ImageTk.PhotoImage(Image.open(LOGO_PATH))
+                self.iconphoto(True, self._logo_icon_photo)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Layout
@@ -151,13 +168,8 @@ class App(_BaseTk):
             izq, text="Lepere Tools", text_color=C["side_muted"],
             font=ctk.CTkFont(FUENTE_UI, size=12, weight="bold"),
         ).pack(side="left")
-
-        der = ctk.CTkFrame(bar, fg_color="transparent")
-        der.pack(side="right", padx=14)
-        for icono in ("win-minus.png", "win-square.png", "win-close.png"):
-            ctk.CTkLabel(der, image=_icon(icono, 16), text="").pack(
-                side="left", padx=(17, 0)
-            )
+        # Sin controles propios de minimizar/cerrar: se usan los nativos del
+        # sistema operativo para evitar tener dos juegos de controles.
 
     def _build_sidebar(self, parent):
         side = ctk.CTkFrame(
@@ -206,22 +218,6 @@ class App(_BaseTk):
         self._item_inactivo(
             herramientas, "broom-inactive.png", "Limpiar datos"
         ).grid(row=2, column=0, sticky="ew")
-
-        # Pie
-        pie = ctk.CTkFrame(side, fg_color="transparent")
-        pie.grid(row=4, column=0, sticky="ew", padx=22, pady=18)
-        avatar = ctk.CTkFrame(
-            pie, fg_color=C["activo_bg"], corner_radius=14, width=27, height=27,
-        )
-        avatar.grid(row=0, column=0, padx=(0, 9))
-        avatar.grid_propagate(False)
-        ctk.CTkLabel(avatar, image=_icon("user-footer.png", 13), text="").place(
-            relx=0.5, rely=0.5, anchor="center"
-        )
-        ctk.CTkLabel(
-            pie, text="v1.2.0 · estable", text_color=C["pronto_texto"],
-            font=ctk.CTkFont(FUENTE_UI, size=11, weight="bold"),
-        ).grid(row=0, column=1, sticky="w")
 
     def _item_activo(self, parent, icono, texto):
         fila = ctk.CTkFrame(parent, fg_color=C["activo_bg"], corner_radius=10)
@@ -341,22 +337,27 @@ class App(_BaseTk):
             relx=0.5, rely=0.5, anchor="center"
         )
 
-        ctk.CTkLabel(
+        lbl_titulo_drop = ctk.CTkLabel(
             interior, text="Arrastra tu archivo Excel aquí", text_color=C["texto"],
             font=ctk.CTkFont(FUENTE_UI, size=15, weight="bold"),
-        ).pack()
-        ctk.CTkLabel(
+        )
+        lbl_titulo_drop.pack()
+        lbl_sub_drop = ctk.CTkLabel(
             interior, text="o haz clic para buscar — .xlsx, .xls",
             text_color=C["texto_muted"], font=ctk.CTkFont(FUENTE_UI, size=12),
-        ).pack()
+        )
+        lbl_sub_drop.pack()
 
-        for widget in (self.drop_zone, interior, caja_icono):
+        drop_widgets = (
+            self.drop_zone, interior, caja_icono, lbl_titulo_drop, lbl_sub_drop,
+        )
+        for widget in drop_widgets:
             widget.bind("<Button-1>", lambda e: self._seleccionar_archivo())
-        if _DND_OK:
-            self.drop_zone.drop_target_register(DND_FILES)
-            self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
-            self.drop_zone.dnd_bind("<<DragEnter>>", self._on_drag_enter)
-            self.drop_zone.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+            if _DND_OK:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_drop)
+                widget.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+                widget.dnd_bind("<<DragLeave>>", self._on_drag_leave)
 
         # Tarjeta de archivo seleccionado (oculta hasta elegir archivo)
         self.archivo_card = ctk.CTkFrame(
@@ -440,8 +441,6 @@ class App(_BaseTk):
             self._cargar_archivo(rutas[0])
 
     def _seleccionar_archivo(self):
-        from tkinter import filedialog
-
         ruta = filedialog.askopenfilename(
             title="Selecciona un archivo Excel",
             filetypes=[("Archivos Excel", "*.xlsx *.xls"), ("Todos", "*.*")],
@@ -463,7 +462,9 @@ class App(_BaseTk):
         self.lbl_meta_archivo.configure(text="Leyendo información del archivo…")
         self.archivo_card.pack(fill="x", pady=(0, 22), before=self.btn_convertir)
 
-        self.btn_convertir.configure(state="disabled", fg_color=C["btn_disabled"])
+        self.btn_convertir.configure(
+            state="disabled", fg_color=C["btn_disabled"], text="→  Convertir a CSV",
+        )
         self._set_estado(C["acento"], "Analizando archivo…")
 
         # La lectura de metadatos (nº de hojas) abre el libro completo; se hace
@@ -499,6 +500,8 @@ class App(_BaseTk):
 
     def _iniciar_conversion(self):
         if not self.archivo or (self.worker and self.worker.is_alive()):
+            return
+        if self.btn_convertir.cget("state") == "disabled":
             return
 
         self.btn_convertir.configure(state="disabled", text="Convirtiendo…")
@@ -570,13 +573,20 @@ class App(_BaseTk):
 
     def _finalizar_ok(self, salida):
         self.progress.set(1)
-        self.btn_convertir.configure(state="normal", text="→  Convertir a CSV")
+        self.btn_convertir.configure(
+            state="disabled", fg_color=C["exito"], text="✓  Convertido",
+        )
         self._set_estado(C["exito"], f"✓ Convertido · guardado en {salida}")
+        messagebox.showinfo(
+            "Conversión completada",
+            f"El archivo se convirtió correctamente.\n\nGuardado en:\n{salida}",
+        )
 
     def _finalizar_error(self, err):
         self.progress.pack_forget()
         self.btn_convertir.configure(state="normal", text="→  Convertir a CSV")
         self._set_estado(C["error"], f"Error: {err}")
+        messagebox.showerror("Error en la conversión", str(err))
 
 
 def main():

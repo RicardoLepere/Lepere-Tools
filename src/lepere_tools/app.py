@@ -101,6 +101,9 @@ class App(_BaseTk):
         self.minsize(780, 600)
         self.configure(fg_color=C["tarjeta_borde"])
         self._set_icono_app()
+        # CustomTkinter reinicia el icono al dibujar la primera vez en Windows;
+        # se vuelve a aplicar tras el primer ciclo de eventos para que persista.
+        self.after(250, self._set_icono_app)
 
         self.archivo = None
         self.cola = queue.Queue()

@@ -101,9 +101,11 @@ class App(_BaseTk):
         self.minsize(780, 600)
         self.configure(fg_color=C["tarjeta_borde"])
         self._set_icono_app()
-        # CustomTkinter reinicia el icono al dibujar la primera vez en Windows;
-        # se vuelve a aplicar tras el primer ciclo de eventos para que persista.
-        self.after(250, self._set_icono_app)
+        # CustomTkinter reinicia el icono al dibujar la ventana en Windows;
+        # se reaplica varias veces tras el arranque para que persista.
+        self.after(150, self._set_icono_app)
+        self.after(500, self._set_icono_app)
+        self.after(1500, self._set_icono_app)
 
         self.archivo = None
         self.cola = queue.Queue()
@@ -116,14 +118,17 @@ class App(_BaseTk):
 
     def _set_icono_app(self):
         """Icono de la ventana y de la barra de tareas (logo Lepere)."""
-        try:
-            if platform.system() == "Windows" and os.path.isfile(LOGO_ICO_PATH):
-                self.iconbitmap(LOGO_ICO_PATH)
-            else:
-                from PIL import ImageTk
+        from PIL import ImageTk
 
-                self._logo_icon_photo = ImageTk.PhotoImage(Image.open(LOGO_PATH))
-                self.iconphoto(True, self._logo_icon_photo)
+        if platform.system() == "Windows" and os.path.isfile(LOGO_ICO_PATH):
+            try:
+                self.iconbitmap(default=LOGO_ICO_PATH)
+            except Exception:
+                pass
+
+        try:
+            self._logo_icon_photo = ImageTk.PhotoImage(Image.open(LOGO_PATH))
+            self.iconphoto(True, self._logo_icon_photo)
         except Exception:
             pass
 
@@ -137,40 +142,16 @@ class App(_BaseTk):
             border_width=1, border_color=C["tarjeta_borde"],
         )
         marco.pack(fill="both", expand=True, padx=1, pady=1)
-        marco.grid_rowconfigure(1, weight=1)
+        marco.grid_rowconfigure(0, weight=1)
         marco.grid_columnconfigure(0, weight=1)
 
-        self._build_titlebar(marco)
-
         cuerpo = ctk.CTkFrame(marco, fg_color="transparent", corner_radius=0)
-        cuerpo.grid(row=1, column=0, sticky="nsew")
+        cuerpo.grid(row=0, column=0, sticky="nsew")
         cuerpo.grid_columnconfigure(1, weight=1)
         cuerpo.grid_rowconfigure(0, weight=1)
 
         self._build_sidebar(cuerpo)
         self._build_contenido(cuerpo)
-
-    def _build_titlebar(self, parent):
-        bar = ctk.CTkFrame(
-            parent, fg_color=C["azul_oscuro"], corner_radius=0, height=40,
-            border_width=0,
-        )
-        bar.grid(row=0, column=0, sticky="ew")
-        bar.grid_propagate(False)
-
-        izq = ctk.CTkFrame(bar, fg_color="transparent")
-        izq.pack(side="left", padx=14)
-        logo_titlebar = Image.open(LOGO_PATH)
-        logo_titlebar_ctk = ctk.CTkImage(
-            light_image=logo_titlebar, dark_image=logo_titlebar, size=(18, 18)
-        )
-        ctk.CTkLabel(izq, image=logo_titlebar_ctk, text="").pack(
-            side="left", padx=(0, 8)
-        )
-        ctk.CTkLabel(
-            izq, text="Lepere Tools", text_color=C["side_muted"],
-            font=ctk.CTkFont(FUENTE_UI, size=12, weight="bold"),
-        ).pack(side="left")
         # Sin controles propios de minimizar/cerrar: se usan los nativos del
         # sistema operativo para evitar tener dos juegos de controles.
 

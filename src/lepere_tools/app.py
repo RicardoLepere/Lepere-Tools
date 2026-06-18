@@ -89,8 +89,8 @@ if _DND_OK:
 
 class App(_BaseTk):
     def __init__(self):
-        cargar_fuentes_embebidas()
         super().__init__()
+        cargar_fuentes_embebidas(self)
         ctk.set_appearance_mode("light")
 
         self.title("Lepere Tools")
@@ -138,7 +138,11 @@ class App(_BaseTk):
 
         izq = ctk.CTkFrame(bar, fg_color="transparent")
         izq.pack(side="left", padx=14)
-        ctk.CTkLabel(izq, image=_icon("file-csv-active.png", 18), text="").pack(
+        logo_titlebar = Image.open(LOGO_PATH)
+        logo_titlebar_ctk = ctk.CTkImage(
+            light_image=logo_titlebar, dark_image=logo_titlebar, size=(18, 18)
+        )
+        ctk.CTkLabel(izq, image=logo_titlebar_ctk, text="").pack(
             side="left", padx=(0, 8)
         )
         ctk.CTkLabel(
